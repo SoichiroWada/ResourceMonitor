@@ -1,0 +1,21 @@
+# Go
+agent/dist/
+# Java / Maven
+target/
+# CDK
+infra/cdk.out/
+# Local config
+agent/config.json
+*.log
+.idea/
+.vscode/
+server/web/node_modules/
+# React のビルド結果（npm run build で生成）
+server/src/main/resources/static/
+# Windows 用リソース（build.sh の go-winres で生成）
+agent/cmd/agent/*.syso
+# TypeScript のビルドキャッシュ
+*.tsbuildinfo
+# 個人ごとの設定（ドメイン名・メールアドレス）と CDK のキャッシュ（AWS アカウント ID を含む）
+infra/cdk.local.json
+infra/cdk.context.json

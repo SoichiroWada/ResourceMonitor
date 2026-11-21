@@ -1,0 +1,54 @@
+<!doctype html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Monitor Switch</title>
+<style>
+  :root { --bg:#f6f7f9; --card:#fff; --fg:#1d2330; --muted:#6b7280; --line:#e5e7eb; --on:#16a34a; --off:#6b7280; --mid:#d97706; --accent:#2563eb; }
+  @media (prefers-color-scheme: dark) { :root { --bg:#12151b; --card:#1b1f27; --fg:#e6e8ec; --muted:#9aa3b2; --line:#2b313c; } }
+  * { box-sizing:border-box; }
+  body { margin:0; min-height:100vh; display:grid; place-items:center; padding:16px;
+         font-family:system-ui,-apple-system,"Segoe UI","Hiragino Sans","Noto Sans JP",sans-serif; background:var(--bg); color:var(--fg); }
+  .card { width:100%; max-width:420px; background:var(--card); border:1px solid var(--line); border-radius:14px; padding:24px; text-align:center; }
+  h1 { font-size:18px; margin:0 0 4px; }
+  .user { color:var(--muted); font-size:13px; min-height:1.2em; }
+  .state { margin:24px 0 8px; font-size:28px; font-weight:700; }
+  .state.RUNNING { color:var(--on); } .state.STOPPED { color:var(--off); }
+  .state.STARTING, .state.STOPPING { color:var(--mid); }
+  .detail { color:var(--muted); font-size:13px; min-height:1.2em; }
+  .buttons { display:flex; gap:12px; justify-content:center; margin:24px 0 16px; }
+  button { font:inherit; font-weight:600; padding:12px 20px; border-radius:10px; border:1px solid var(--line); background:var(--card); color:var(--fg); cursor:pointer; min-width:120px; }
+  button.primary { background:var(--accent); border-color:var(--accent); color:#fff; }
+  button:disabled { opacity:.45; cursor:default; }
+  a { color:var(--accent); }
+  .link { min-height:1.4em; }
+  .foot { margin-top:16px; font-size:13px; }
+  .err { color:#dc2626; font-size:13px; min-height:1.2em; }
+</style>
+</head>
+<body>
+<main class="card">
+  <h1>Resource Monitor スイッチ</h1>
+  <div class="user" id="user"></div>
+
+  <div id="app" hidden>
+    <div class="state" id="state">-</div>
+    <div class="detail" id="detail"></div>
+    <div class="buttons">
+      <button class="primary" id="start">起動</button>
+      <button id="stop">停止</button>
+    </div>
+    <div class="link" id="link"></div>
+    <div class="foot"><a href="#" id="logout">ログアウト</a></div>
+  </div>
+
+  <div id="login" hidden>
+    <p class="detail">操作するにはログインしてください。</p>
+    <div class="buttons"><button class="primary" id="loginBtn">ログイン</button></div>
+  </div>
+  <div class="err" id="err"></div>
+</main>
+<script src="app.js"></script>
+</body>
+</html>

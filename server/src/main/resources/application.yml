@@ -1,0 +1,32 @@
+server:
+  port: 8080
+
+spring:
+  application:
+    name: resource-monitor-server
+  security:
+    user:
+      # ダッシュボードの Basic 認証（本番は ECS のシークレットで環境変数 DASHBOARD_PASSWORD を渡す）
+      name: ${DASHBOARD_USER:admin}
+      password: ${DASHBOARD_PASSWORD:change-me}
+
+app:
+  # エージェント用 API キー（カンマ区切りで複数可）。ECS のシークレットで AGENT_API_KEYS を渡す
+  agent-api-keys: ${AGENT_API_KEYS:local-dev-key}
+  dynamodb:
+    hosts-table: ${HOSTS_TABLE:ResourceMonitor-Hosts}
+    metrics-table: ${METRICS_TABLE:ResourceMonitor-Metrics}
+    retention-days: ${RETENTION_DAYS:30}
+    # DynamoDB Local を使うときだけ指定（例: http://localhost:8000）
+    endpoint: ${DYNAMODB_ENDPOINT:}
+    create-tables: ${DYNAMODB_CREATE_TABLES:false}
+  auto-stop:
+    enabled: ${AUTO_STOP_ENABLED:false}
+    idle-minutes: ${AUTO_STOP_IDLE_MINUTES:30}
+    cluster: ${ECS_CLUSTER:resource-monitor}
+    service: ${ECS_SERVICE:resource-monitor-server}
+  dns:
+    enabled: ${DNS_ENABLED:false}
+    hosted-zone-id: ${DNS_HOSTED_ZONE_ID:}
+    record-name: ${DNS_RECORD_NAME:}
+    ttl: 60

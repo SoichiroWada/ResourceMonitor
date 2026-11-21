@@ -1,0 +1,7 @@
+{
+  "app": "mvn -e -q compile exec:java",
+  "context": {
+    "agentApiKeysParam": "/resource-monitor/agent-api-keys",
+    "dashboardPasswordParam": "/resource-monitor/dashboard-password"
+  }
+}

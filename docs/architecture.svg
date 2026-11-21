@@ -1,0 +1,144 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1100 720" width="1100" height="720" font-family="'Noto Sans JP','Hiragino Sans','Yu Gothic UI','Segoe UI',sans-serif" font-size="13">
+  <defs>
+    <marker id="a" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M0,0 L10,5 L0,10 z" fill="#334155"/>
+    </marker>
+    <marker id="ab" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M0,0 L10,5 L0,10 z" fill="#2563eb"/>
+    </marker>
+    <marker id="ao" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M0,0 L10,5 L0,10 z" fill="#c2410c"/>
+    </marker>
+    <style>
+      .box { fill:#fff; stroke:#94a3b8; stroke-width:1.2; rx:8; }
+      .t { font-weight:700; fill:#0f172a; }
+      .s { fill:#475569; font-size:11.5px; }
+      .lbl { fill:#334155; font-size:11.5px; }
+      .blue { fill:#1d4ed8; font-size:11.5px; }
+      .org { fill:#c2410c; font-size:11.5px; }
+      .ln { stroke:#334155; stroke-width:1.4; fill:none; marker-end:url(#a); }
+      .lb { stroke:#2563eb; stroke-width:1.6; fill:none; marker-end:url(#ab); }
+      .lo { stroke:#c2410c; stroke-width:1.4; fill:none; marker-end:url(#ao); stroke-dasharray:5 4; }
+    </style>
+  </defs>
+
+  <rect width="1100" height="720" fill="#f8fafc"/>
+
+  <!-- ===== 左: オンプレ / 利用者 ===== -->
+  <text x="30" y="24" class="t" font-size="14">オンプレミス / 利用者</text>
+
+  <rect class="box" x="30" y="40" width="210" height="64" fill="#fff7ed" stroke="#fdba74"/>
+  <text x="44" y="64" class="t">お名前.com DNS</text>
+  <text x="44" y="82" class="s">example.jp（既存のまま）</text>
+  <text x="44" y="97" class="s">NS: monitor → Route 53 に委任</text>
+
+  <rect class="box" x="30" y="150" width="210" height="64"/>
+  <text x="44" y="174" class="t">Ubuntu Server 26.04</text>
+  <text x="44" y="192" class="s">resource-agent（Go, systemd）</text>
+  <text x="44" y="207" class="s">送信失敗時はローカルに一時保存</text>
+
+  <rect class="box" x="30" y="234" width="210" height="64"/>
+  <text x="44" y="258" class="t">Windows 11 PC</text>
+  <text x="44" y="276" class="s">resource-agent.exe（Windowsサービス）</text>
+  <text x="44" y="291" class="s">同じソースからクロスビルド</text>
+
+  <rect class="box" x="30" y="455" width="210" height="100" fill="#eff6ff" stroke="#93c5fd"/>
+  <text x="44" y="480" class="t">ブラウザ（あなた）</text>
+  <text x="44" y="500" class="s">① スイッチ画面を開く</text>
+  <text x="44" y="516" class="s">② Cognito でログイン</text>
+  <text x="44" y="532" class="s">③ 起動 / 停止ボタン</text>
+  <text x="44" y="548" class="s">④ ダッシュボードを見る</text>
+
+  <!-- ===== AWS ===== -->
+  <rect x="290" y="12" width="790" height="696" rx="12" fill="none" stroke="#f59e0b" stroke-width="1.6"/>
+  <text x="306" y="34" class="t" font-size="14" fill="#b45309">AWS（例: ap-northeast-1）</text>
+
+  <rect class="box" x="320" y="46" width="270" height="64"/>
+  <text x="334" y="70" class="t">Route 53（monitor.example.jp）</text>
+  <text x="334" y="88" class="s">A: api.monitor.example.jp → タスクの IP</text>
+  <text x="334" y="103" class="s">TTL 60 秒 / ホストゾーン $0.50/月</text>
+
+  <!-- VPC -->
+  <rect x="320" y="140" width="460" height="215" rx="10" fill="#f0fdf4" stroke="#86efac" stroke-dasharray="6 4"/>
+  <text x="334" y="160" class="s">VPC（パブリックサブネットのみ・NAT なし・ALB なし）</text>
+
+  <rect class="box" x="350" y="172" width="400" height="160" stroke="#16a34a" stroke-width="1.6"/>
+  <text x="366" y="196" class="t">ECS Fargate（0.25 vCPU / 0.5 GB, パブリック IP）</text>
+  <text x="366" y="214" class="s">Spring Boot :8080（普段は desiredCount = 0）</text>
+  <text x="366" y="238" class="lbl">・POST /api/metrics … エージェントから受信（X-Api-Key）</text>
+  <text x="366" y="256" class="lbl">・/ ダッシュボード ＋ /api/hosts …（Basic 認証）</text>
+  <text x="366" y="274" class="lbl">・起動時: 自分の IP で Route 53 を UPSERT</text>
+  <text x="366" y="292" class="lbl">・@Scheduled: 人のアクセスが 30 分無ければ</text>
+  <text x="366" y="310" class="lbl">　 自分のサービスを desiredCount = 0 に（自動停止）</text>
+
+  <rect class="box" x="820" y="190" width="230" height="96" fill="#eef2ff" stroke="#a5b4fc"/>
+  <text x="834" y="214" class="t">DynamoDB（オンデマンド）</text>
+  <text x="834" y="234" class="s">Hosts: hostId → 最新値</text>
+  <text x="834" y="252" class="s">Metrics: hostId + ts → 時系列</text>
+  <text x="834" y="270" class="s">TTL で 30 日後に自動削除</text>
+
+  <!-- スイッチ系 -->
+  <rect class="box" x="320" y="410" width="220" height="70"/>
+  <text x="334" y="434" class="t">CloudFront + S3</text>
+  <text x="334" y="452" class="s">スイッチ画面（静的 HTML/JS）</text>
+  <text x="334" y="468" class="s">config.json は CDK が生成</text>
+
+  <rect class="box" x="320" y="580" width="220" height="70"/>
+  <text x="334" y="604" class="t">Amazon Cognito</text>
+  <text x="334" y="622" class="s">マネージドログイン（PKCE）</text>
+  <text x="334" y="638" class="s">セルフサインアップ無効</text>
+
+  <rect class="box" x="590" y="475" width="200" height="70"/>
+  <text x="604" y="499" class="t">API Gateway（HTTP API）</text>
+  <text x="604" y="517" class="s">GET /status, POST /start, /stop</text>
+  <text x="604" y="533" class="s">Cognito JWT オーソライザー</text>
+
+  <rect class="box" x="830" y="475" width="220" height="70"/>
+  <text x="844" y="499" class="t">Lambda（Java 21）</text>
+  <text x="844" y="517" class="s">SwitchHandler</text>
+  <text x="844" y="533" class="s">ecs:UpdateService / Describe</text>
+
+  <!-- コスト -->
+  <rect x="590" y="580" width="460" height="112" rx="8" fill="#fefce8" stroke="#fde047"/>
+  <text x="604" y="604" class="t">停止中（タスク 0）にかかる費用</text>
+  <text x="604" y="628" class="s">Route 53 ホストゾーン $0.50/月</text>
+  <text x="604" y="644" class="s">＋ DynamoDB / S3 / CloudWatch Logs の保管料（わずか）</text>
+  <text x="604" y="662" class="s">Fargate と パブリック IPv4 はタスクが動いている時間だけ課金</text>
+  <text x="604" y="678" class="s">ALB は使わないので固定費なし</text>
+
+  <!-- ===== 矢印 ===== -->
+  <!-- お名前 → Route53 -->
+  <path class="lo" d="M240,72 H318"/>
+  <text x="248" y="62" class="org">NS委任</text>
+
+  <!-- エージェント → Fargate -->
+  <path class="ln" d="M240,182 H300 V232 H348"/>
+  <path class="ln" d="M240,266 H300 V250 H348"/>
+  <text x="246" y="226" class="lbl">HTTP</text>
+  <text x="246" y="240" class="lbl">:8080</text>
+
+  <!-- Fargate → Route53 -->
+  <path class="lo" d="M455,172 V112"/>
+  <text x="462" y="134" class="org">起動時 UPSERT</text>
+
+  <!-- Fargate ↔ DynamoDB -->
+  <path class="ln" d="M750,238 H818"/>
+  <text x="756" y="230" class="lbl">保存/参照</text>
+
+  <!-- ブラウザ → CloudFront / Cognito / API GW / Fargate -->
+  <path class="lb" d="M240,475 H280 V445 H318"/>
+  <text x="246" y="440" class="blue">①</text>
+  <path class="lb" d="M240,540 H280 V615 H318"/>
+  <text x="246" y="600" class="blue">②</text>
+  <path class="lb" d="M240,510 H588"/>
+  <text x="556" y="503" class="blue">③ JWT</text>
+  <path class="lb" d="M135,455 V380 H560 V334"/>
+  <text x="380" y="374" class="blue">④ http://api.monitor.example.jp:8080/（Basic 認証）</text>
+
+  <!-- API GW → Lambda -->
+  <path class="ln" d="M790,510 H828"/>
+
+  <!-- Lambda → Fargate サービス -->
+  <path class="lo" d="M940,475 V400 H700 V334"/>
+  <text x="790" y="394" class="org">desiredCount = 1 / 0</text>
+</svg>
