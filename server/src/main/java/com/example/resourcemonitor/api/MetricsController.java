@@ -4,6 +4,7 @@ import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
 import java.time.Duration;
 import java.time.Instant;
+import java.util.ArrayList;
 import java.util.List;
 import java.util.Set;
 
@@ -22,33 +23,67 @@ import com.example.resourcemonitor.config.AppProperties;
 import com.example.resourcemonitor.store.MetricsRepository;
 import com.example.resourcemonitor.store.MetricsRepository.HostSummary;
 
+import tools.jackson.core.JacksonException;
+import tools.jackson.databind.JsonNode;
+import tools.jackson.databind.ObjectMapper;
+
 @RestController
 @RequestMapping("/api")
 public class MetricsController {
 
+    /** 1 回の受信で受け付ける最大件数（エージェントは通常 3 件、一時保存分の再送で最大 60 件）。 */
+    private static final int MAX_BATCH = 500;
+    /** この期間（分）までは間引かずに返す。 */
+    private static final int RAW_MAX_MINUTES = 60;
+
     private final MetricsRepository repo;
+    private final ObjectMapper json;
     private final Set<String> apiKeys;
 
-    public MetricsController(MetricsRepository repo, AppProperties props) {
+    public MetricsController(MetricsRepository repo, ObjectMapper json, AppProperties props) {
         this.repo = repo;
+        this.json = json;
         this.apiKeys = props.apiKeySet();
     }
 
-    /** エージェントからの受信。 */
+    /**
+     * エージェントからの受信。1 件（JSON オブジェクト）と、まとめて送る複数件（JSON 配列）の両方を受け付ける。
+     * 1 件の形式は旧版のエージェント用。パスを分けないのは、自動停止の判定とセキュリティ設定が
+     * このパスだけをエージェント用として扱っているため。
+     */
     @PostMapping("/metrics")
     public ResponseEntity<Void> receive(@RequestHeader(name = "X-Api-Key", required = false) String apiKey,
-                                        @RequestBody MetricSnapshot snapshot) {
+                                        @RequestBody JsonNode body) {
         if (!isValidKey(apiKey)) {
             return ResponseEntity.status(HttpStatus.UNAUTHORIZED).build();
         }
-        if (snapshot.hostId() == null || snapshot.hostId().isBlank()) {
+        List<JsonNode> nodes = new ArrayList<>();
+        if (body.isArray()) {
+            body.forEach(nodes::add);
+        } else {
+            nodes.add(body);
+        }
+        if (nodes.isEmpty() || nodes.size() > MAX_BATCH) {
             return ResponseEntity.badRequest().build();
         }
-        if (snapshot.timestamp() == null) {
-            snapshot = new MetricSnapshot(snapshot.hostId(), snapshot.hostname(), snapshot.os(), snapshot.platform(),
-                    Instant.now(), snapshot.cpu(), snapshot.memory(), snapshot.disks());
+        List<MetricSnapshot> snapshots = new ArrayList<>(nodes.size());
+        for (JsonNode n : nodes) {
+            MetricSnapshot s;
+            try {
+                s = json.treeToValue(n, MetricSnapshot.class);
+            } catch (JacksonException e) {
+                return ResponseEntity.badRequest().build();
+            }
+            if (s == null || s.hostId() == null || s.hostId().isBlank()) {
+                return ResponseEntity.badRequest().build();
+            }
+            if (s.timestamp() == null) {
+                s = new MetricSnapshot(s.hostId(), s.hostname(), s.os(), s.platform(),
+                        Instant.now(), s.cpu(), s.memory(), s.disks());
+            }
+            snapshots.add(s);
         }
-        repo.save(snapshot);
+        repo.saveAll(snapshots);
         return ResponseEntity.accepted().build();
     }
 
@@ -61,6 +96,7 @@ public class MetricsController {
     /**
      * 指定ホストの時系列（既定: 直近 1 時間、最大 24 時間）。
      * 期間は minutes（分）で指定する。minutes がなければ hours（時間）を使う（旧画面との互換用）。
+     * 1 時間を超える期間は、データ量を抑えるため 1 分ごとの平均にまとめて返す。
      */
     @GetMapping("/hosts/{hostId}/metrics")
     public List<MetricSnapshot> history(@PathVariable String hostId,
@@ -68,7 +104,8 @@ public class MetricsController {
                                         @RequestParam(defaultValue = "1") int hours) {
         int m = minutes != null ? minutes : hours * 60;
         m = Math.max(1, Math.min(m, 24 * 60));
-        return repo.findSince(hostId, Instant.now().minus(Duration.ofMinutes(m)));
+        List<MetricSnapshot> rows = repo.findSince(hostId, Instant.now().minus(Duration.ofMinutes(m)));
+        return m > RAW_MAX_MINUTES ? Downsampler.perMinute(rows) : rows;
     }
 
     private boolean isValidKey(String key) {

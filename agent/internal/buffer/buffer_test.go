@@ -13,7 +13,12 @@ func TestPushTrimsOldest(t *testing.T) {
 		}
 	}
 	var got []string
-	_, _ = b.Flush(10, func(p []byte) error { got = append(got, string(p)); return nil })
+	_, _ = b.Flush(10, 1, func(ps [][]byte) error {
+		for _, p := range ps {
+			got = append(got, string(p))
+		}
+		return nil
+	})
 	if len(got) != 2 || got[0] != "b" || got[1] != "c" {
 		t.Fatalf("got %v, want [b c]", got)
 	}
@@ -22,12 +27,21 @@ func TestPushTrimsOldest(t *testing.T) {
 	}
 }
 
+func TestFlushInBatches(t *testing.T) {
+	b, _ := New(t.TempDir(), 100)
+	_ = b.Push([]byte("1"), []byte("2"), []byte("3"), []byte("4"), []byte("5"))
+	var sizes []int
+	n, err := b.Flush(4, 3, func(ps [][]byte) error { sizes = append(sizes, len(ps)); return nil })
+	if err != nil || n != 4 || len(sizes) != 2 || sizes[0] != 3 || sizes[1] != 1 || b.Len() != 1 {
+		t.Fatalf("n=%d err=%v sizes=%v len=%d", n, err, sizes, b.Len())
+	}
+}
+
 func TestFlushStopsOnError(t *testing.T) {
 	b, _ := New(t.TempDir(), 10)
-	_ = b.Push([]byte("1"))
-	_ = b.Push([]byte("2"))
-	n, err := b.Flush(10, func(p []byte) error {
-		if string(p) == "2" {
+	_ = b.Push([]byte("1"), []byte("2"))
+	n, err := b.Flush(10, 1, func(ps [][]byte) error {
+		if string(ps[0]) == "2" {
 			return errors.New("down")
 		}
 		return nil

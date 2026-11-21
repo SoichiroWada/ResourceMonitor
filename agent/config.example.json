@@ -2,7 +2,8 @@
   "serverUrl": "http://api.monitor.example.jp:8080/api/metrics",
   "apiKey": "ここにエージェント用APIキー",
   "hostId": "",
-  "intervalSeconds": 60,
+  "sampleSeconds": 10,
+  "sendSeconds": 30,
   "bufferDir": "",
-  "bufferMaxItems": 1440
+  "bufferHours": 24
 }

@@ -4,6 +4,7 @@ import java.time.Duration;
 import java.time.Instant;
 import java.util.ArrayList;
 import java.util.Comparator;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 
@@ -14,8 +15,11 @@ import com.example.resourcemonitor.config.AppProperties;
 
 import software.amazon.awssdk.services.dynamodb.DynamoDbClient;
 import software.amazon.awssdk.services.dynamodb.model.AttributeValue;
+import software.amazon.awssdk.services.dynamodb.model.ConditionalCheckFailedException;
+import software.amazon.awssdk.services.dynamodb.model.PutRequest;
 import software.amazon.awssdk.services.dynamodb.model.QueryRequest;
 import software.amazon.awssdk.services.dynamodb.model.ScanRequest;
+import software.amazon.awssdk.services.dynamodb.model.WriteRequest;
 import tools.jackson.databind.ObjectMapper;
 
 /**
@@ -34,6 +38,9 @@ public class MetricsRepository {
     public record HostSummary(String hostId, String hostname, String os, String platform,
                               Instant lastSeen, MetricSnapshot latest) {}
 
+    /** BatchWriteItem で 1 回に書ける最大件数。 */
+    private static final int BATCH_WRITE_MAX = 25;
+
     private final DynamoDbClient ddb;
     private final ObjectMapper json;
     private final String hostsTable;
@@ -48,24 +55,63 @@ public class MetricsRepository {
         this.retention = Duration.ofDays(props.dynamodb().retentionDays());
     }
 
-    public void save(MetricSnapshot s) {
-        String data = json.writeValueAsString(s);
+    /**
+     * 時系列をまとめて保存し、ホストごとの最新値を更新します。
+     * 一時保存分の再送では古いデータが後から届くため、最新値は今より新しいときだけ書き換えます。
+     */
+    public void saveAll(List<MetricSnapshot> snapshots) {
+        List<WriteRequest> writes = new ArrayList<>(snapshots.size());
+        Map<String, MetricSnapshot> newest = new LinkedHashMap<>();
+        for (MetricSnapshot s : snapshots) {
+            writes.add(WriteRequest.builder().putRequest(PutRequest.builder().item(Map.of(
+                    "hostId", str(s.hostId()),
+                    "ts", num(s.timestamp().toEpochMilli()),
+                    "data", str(json.writeValueAsString(s)),
+                    "expiresAt", num(s.timestamp().plus(retention).getEpochSecond()))).build()).build());
+            newest.merge(s.hostId(), s, (a, b) -> b.timestamp().isAfter(a.timestamp()) ? b : a);
+        }
+        for (int i = 0; i < writes.size(); i += BATCH_WRITE_MAX) {
+            batchWrite(writes.subList(i, Math.min(i + BATCH_WRITE_MAX, writes.size())));
+        }
+        newest.values().forEach(this::updateLatest);
+    }
+
+    /** BatchWriteItem は書けなかった分（UnprocessedItems）を返すことがあるので、少し待って書き直す。 */
+    private void batchWrite(List<WriteRequest> chunk) {
+        Map<String, List<WriteRequest>> req = Map.of(metricsTable, chunk);
+        for (int attempt = 0; !req.isEmpty(); attempt++) {
+            if (attempt >= 5) {
+                throw new IllegalStateException("DynamoDB への書き込みが完了しませんでした");
+            }
+            if (attempt > 0) {
+                try {
+                    Thread.sleep(100L << attempt);
+                } catch (InterruptedException e) {
+                    Thread.currentThread().interrupt();
+                    throw new IllegalStateException(e);
+                }
+            }
+            Map<String, List<WriteRequest>> current = req;
+            req = ddb.batchWriteItem(r -> r.requestItems(current)).unprocessedItems();
+        }
+    }
+
+    private void updateLatest(MetricSnapshot s) {
         long ts = s.timestamp().toEpochMilli();
-        long expiresAt = s.timestamp().plus(retention).getEpochSecond();
-
-        ddb.putItem(r -> r.tableName(metricsTable).item(Map.of(
-                "hostId", str(s.hostId()),
-                "ts", num(ts),
-                "data", str(data),
-                "expiresAt", num(expiresAt))));
-
-        ddb.putItem(r -> r.tableName(hostsTable).item(Map.of(
-                "hostId", str(s.hostId()),
-                "hostname", str(nz(s.hostname())),
-                "os", str(nz(s.os())),
-                "platform", str(nz(s.platform())),
-                "lastSeen", num(ts),
-                "data", str(data))));
+        try {
+            ddb.putItem(r -> r.tableName(hostsTable)
+                    .item(Map.of(
+                            "hostId", str(s.hostId()),
+                            "hostname", str(nz(s.hostname())),
+                            "os", str(nz(s.os())),
+                            "platform", str(nz(s.platform())),
+                            "lastSeen", num(ts),
+                            "data", str(json.writeValueAsString(s))))
+                    .conditionExpression("attribute_not_exists(lastSeen) OR lastSeen < :ts")
+                    .expressionAttributeValues(Map.of(":ts", num(ts))));
+        } catch (ConditionalCheckFailedException e) {
+            // すでにもっと新しい値が入っている（古いデータの再送）。最新値はそのまま
+        }
     }
 
     public List<HostSummary> listHosts() {

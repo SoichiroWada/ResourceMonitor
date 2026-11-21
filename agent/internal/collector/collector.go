@@ -3,6 +3,8 @@
 package collector
 
 import (
+	"errors"
+	"math"
 	"runtime"
 	"strings"
 	"time"
@@ -53,30 +55,61 @@ var ignoredFsTypes = map[string]bool{
 	"efivarfs": true, "fuse.snapfuse": true,
 }
 
-// Collect は sampleWindow の間 CPU を計測し、スナップショットを返します。
-func Collect(hostID string, sampleWindow time.Duration) (*Snapshot, error) {
-	s := &Snapshot{HostID: hostID, OS: runtime.GOOS}
+// Sampler は CPU 使用率を「前回の測定から今回まで」の平均として求めます。
+//
+// OS はコアごとに CPU 時間（使用中・待機中など）の累計を数えています。前回と今回の累計の差から
+// 使用率を計算するので、Sample を一定間隔で呼べば、測っていない時間のない連続した平均になります。
+type Sampler struct {
+	hostID   string
+	prev     []cpu.TimesStat
+	model    string
+	hostname string
+	platform string
+}
 
+// NewSampler は最初の基準値を読み込みます。最初の Sample はここからの平均になります。
+func NewSampler(hostID string) (*Sampler, error) {
+	s := &Sampler{hostID: hostID}
+	// 変わらない情報は最初に 1 回だけ読む（Windows の cpu.Info は WMI を使うため重い）
 	if hi, err := host.Info(); err == nil {
-		s.Hostname = hi.Hostname
-		s.Platform = strings.TrimSpace(hi.Platform + " " + hi.PlatformVersion)
+		s.hostname = hi.Hostname
+		s.platform = strings.TrimSpace(hi.Platform + " " + hi.PlatformVersion)
 	}
-
-	// コアごとの使用率（sampleWindow の間ブロックして差分を取る）
-	perCore, err := cpu.Percent(sampleWindow, true)
+	if infos, err := cpu.Info(); err == nil && len(infos) > 0 {
+		s.model = strings.TrimSpace(infos[0].ModelName)
+	}
+	t, err := cpu.Times(true)
 	if err != nil {
 		return nil, err
 	}
-	s.CPU.PerCore = round(perCore)
-	var sum float64
-	for _, p := range perCore {
-		sum += p
+	s.prev = t
+	return s, nil
+}
+
+// Sample は前回からの CPU 平均使用率と、今の時点のメモリ・ディスクの値を返します。
+func (sm *Sampler) Sample() (*Snapshot, error) {
+	now, err := cpu.Times(true)
+	if err != nil {
+		return nil, err
 	}
-	if len(perCore) > 0 {
-		s.CPU.TotalPercent = round1(sum / float64(len(perCore)))
+	s := &Snapshot{HostID: sm.hostID, OS: runtime.GOOS, Hostname: sm.hostname, Platform: sm.platform}
+	s.CPU.Model = sm.model
+	if len(now) == len(sm.prev) {
+		perCore := make([]float64, len(now))
+		var sum float64
+		for i := range now {
+			perCore[i] = busyPercent(sm.prev[i], now[i])
+			sum += perCore[i]
+		}
+		s.CPU.PerCore = round(perCore)
+		if len(perCore) > 0 {
+			s.CPU.TotalPercent = round1(sum / float64(len(perCore)))
+		}
 	}
-	if infos, err := cpu.Info(); err == nil && len(infos) > 0 {
-		s.CPU.Model = strings.TrimSpace(infos[0].ModelName)
+	sm.prev = now
+	if len(s.CPU.PerCore) == 0 {
+		// コア数が変わった直後など。基準値だけ更新して、この回は使わない
+		return nil, errors.New("CPU のコア数が変わったため、この回の測定を捨てました")
 	}
 
 	vm, err := mem.VirtualMemory()
@@ -84,11 +117,37 @@ func Collect(hostID string, sampleWindow time.Duration) (*Snapshot, error) {
 		return nil, err
 	}
 	s.Memory = Memory{TotalBytes: vm.Total, UsedBytes: vm.Used, UsedPercent: round1(vm.UsedPercent)}
+	s.Disks = disks()
+	s.Timestamp = time.Now().UTC()
+	return s, nil
+}
 
+// busyPercent は 2 回の累計の差から使用率（%）を求めます（gopsutil の cpu.Percent と同じ計算）。
+func busyPercent(t1, t2 cpu.TimesStat) float64 {
+	all := func(t cpu.TimesStat) (total, busy float64) {
+		total = t.Total()
+		if runtime.GOOS == "linux" {
+			total -= t.Guest + t.GuestNice // Linux では User に含まれているため
+		}
+		return total, total - t.Idle - t.Iowait
+	}
+	a1, b1 := all(t1)
+	a2, b2 := all(t2)
+	if b2 <= b1 {
+		return 0
+	}
+	if a2 <= a1 {
+		return 100
+	}
+	return math.Min(100, math.Max(0, (b2-b1)/(a2-a1)*100))
+}
+
+func disks() []Disk {
 	parts, err := disk.Partitions(false)
 	if err != nil {
-		return nil, err
+		return nil
 	}
+	var out []Disk
 	seen := map[string]bool{}
 	for _, p := range parts {
 		if ignoredFsTypes[p.Fstype] || seen[p.Mountpoint] {
@@ -99,14 +158,12 @@ func Collect(hostID string, sampleWindow time.Duration) (*Snapshot, error) {
 			continue // CD ドライブ等、読めないものはスキップ
 		}
 		seen[p.Mountpoint] = true
-		s.Disks = append(s.Disks, Disk{
+		out = append(out, Disk{
 			Device: p.Device, Mountpoint: p.Mountpoint, FsType: p.Fstype,
 			TotalBytes: u.Total, UsedBytes: u.Used, UsedPercent: round1(u.UsedPercent),
 		})
 	}
-
-	s.Timestamp = time.Now().UTC()
-	return s, nil
+	return out
 }
 
 func round1(v float64) float64 { return float64(int64(v*10+0.5)) / 10 }

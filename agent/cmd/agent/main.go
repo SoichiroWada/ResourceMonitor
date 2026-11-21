@@ -3,7 +3,7 @@
 // 使い方:
 //
 //	resource-agent -config config.json run        # フォアグラウンドで実行（動作確認用）
-//	resource-agent -config config.json once       # 1 回だけ収集して JSON を表示（送信しない）
+//	resource-agent -config config.json once       # 1 秒間だけ測定して JSON を表示（送信しない）
 //	resource-agent -config config.json install    # サービス登録（Ubuntu: systemd / Windows: サービス）
 //	resource-agent start | stop | uninstall
 package main
@@ -15,6 +15,7 @@ import (
 	"log"
 	"os"
 	"path/filepath"
+	"sync"
 	"time"
 
 	"github.com/kardianos/service"
@@ -49,40 +50,104 @@ func (p *program) Stop(s service.Service) error {
 	return nil
 }
 
+// 一時保存分の再送: 送信のたびに最大 flushLimit 件を、flushBatch 件ずつまとめて送る。
+// 10 秒間隔・24 時間分（8,640 件）なら、30 秒ごとの送信で約 15 分で送り終わる。
+const (
+	flushLimit = 300
+	flushBatch = 60
+)
+
+// loop は 2 つの処理を並行して動かします。
+//   - 測定: sampleSeconds ごとに測定して、送信待ちの列に入れる
+//   - 送信: sendSeconds ごとに、送信待ちの分をまとめて送る
+//
+// 送信が遅れても測定の間隔はずれません。
 func (p *program) loop() {
 	defer close(p.done)
 	snd := sender.New(p.cfg.ServerURL, p.cfg.APIKey)
-	buf, err := buffer.New(p.cfg.BufferDir, p.cfg.BufferMaxItems)
+	buf, err := buffer.New(p.cfg.BufferDir, p.cfg.BufferItems())
 	if err != nil {
 		log.Printf("バッファを初期化できません（一時保存なしで続行）: %v", err)
 	}
-	interval := time.Duration(p.cfg.IntervalSeconds) * time.Second
-	log.Printf("resource-agent %s 開始: host=%s interval=%s server=%s", version, p.cfg.HostID, interval, p.cfg.ServerURL)
+	sampleEvery := time.Duration(p.cfg.SampleSeconds) * time.Second
+	sendEvery := time.Duration(p.cfg.SendSeconds) * time.Second
+	log.Printf("resource-agent %s 開始: host=%s sample=%s send=%s server=%s",
+		version, p.cfg.HostID, sampleEvery, sendEvery, p.cfg.ServerURL)
 
-	ticker := time.NewTicker(interval)
+	var (
+		mu      sync.Mutex
+		pending [][]byte
+	)
+	take := func() [][]byte {
+		mu.Lock()
+		defer mu.Unlock()
+		out := pending
+		pending = nil
+		return out
+	}
+
+	// 測定
+	sampled := make(chan struct{})
+	go func() {
+		defer close(sampled)
+		var sm *collector.Sampler
+		ticker := time.NewTicker(sampleEvery)
+		defer ticker.Stop()
+		for {
+			if sm == nil {
+				s, err := collector.NewSampler(p.cfg.HostID)
+				if err != nil {
+					log.Printf("測定の準備に失敗: %v", err)
+				} else {
+					sm = s
+				}
+			}
+			select {
+			case <-p.quit:
+				return
+			case <-ticker.C:
+			}
+			if sm == nil {
+				continue
+			}
+			snap, err := sm.Sample()
+			if err != nil {
+				log.Printf("収集失敗: %v", err)
+				continue
+			}
+			body, _ := json.Marshal(snap)
+			mu.Lock()
+			pending = append(pending, body)
+			mu.Unlock()
+		}
+	}()
+
+	// 送信
+	ticker := time.NewTicker(sendEvery)
 	defer ticker.Stop()
 	for {
-		p.tick(snd, buf)
 		select {
 		case <-p.quit:
+			<-sampled
+			// 送れなかった分は一時保存して、次に起動したときに送る
+			if items := take(); len(items) > 0 && buf != nil {
+				_ = buf.Push(items...)
+			}
 			log.Printf("resource-agent 停止")
 			return
 		case <-ticker.C:
+			p.send(snd, buf, take())
 		}
 	}
 }
 
-func (p *program) tick(snd *sender.Sender, buf *buffer.Buffer) {
-	snap, err := collector.Collect(p.cfg.HostID, time.Second)
-	if err != nil {
-		log.Printf("収集失敗: %v", err)
+func (p *program) send(snd *sender.Sender, buf *buffer.Buffer, items [][]byte) {
+	if len(items) == 0 {
 		return
 	}
-	body, _ := json.Marshal(snap)
-
-	if err := snd.Send(body); err != nil {
+	if err := snd.SendBatch(items); err != nil {
 		if buf != nil {
-			if perr := buf.Push(body); perr != nil {
+			if perr := buf.Push(items...); perr != nil {
 				log.Printf("送信失敗・一時保存も失敗: %v / %v", err, perr)
 			} else {
 				log.Printf("送信失敗のため一時保存しました（%d 件保留中）: %v", buf.Len(), err)
@@ -92,9 +157,9 @@ func (p *program) tick(snd *sender.Sender, buf *buffer.Buffer) {
 		}
 		return
 	}
-	// 送信できた = サーバーが起動している。溜まっていた分を再送する（1 回最大 100 件）
+	// 送信できた = サーバーが起動している。溜まっていた分を再送する
 	if buf != nil {
-		if n, err := buf.Flush(100, snd.Send); n > 0 || err != nil {
+		if n, err := buf.Flush(flushLimit, flushBatch, snd.SendBatch); n > 0 || err != nil {
 			log.Printf("保留データを再送: %d 件 (err=%v)", n, err)
 		}
 	}
@@ -133,7 +198,10 @@ func main() {
 	exitIf(err)
 
 	if cmd == "once" {
-		snap, err := collector.Collect(cfg.HostID, time.Second)
+		sm, err := collector.NewSampler(cfg.HostID)
+		exitIf(err)
+		time.Sleep(time.Second)
+		snap, err := sm.Sample()
 		exitIf(err)
 		out, _ := json.MarshalIndent(snap, "", "  ")
 		fmt.Println(string(out))

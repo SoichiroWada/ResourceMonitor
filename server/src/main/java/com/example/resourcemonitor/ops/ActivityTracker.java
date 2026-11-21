@@ -11,7 +11,7 @@ import jakarta.servlet.http.HttpServletResponse;
 
 /**
  * 「人のアクセス」の最終時刻を記録します。
- * エージェントの送信（POST /api/metrics）は毎分来るので数えません。数えると自動停止しなくなるためです。
+ * エージェントの送信（POST /api/metrics）は 30 秒ごとに来るので数えません。数えると自動停止しなくなるためです。
  */
 @Component
 public class ActivityTracker implements HandlerInterceptor {

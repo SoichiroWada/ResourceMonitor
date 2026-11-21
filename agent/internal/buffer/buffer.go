@@ -23,24 +23,24 @@ func New(dir string, maxItems int) (*Buffer, error) {
 	return &Buffer{path: filepath.Join(dir, "pending.jsonl"), maxItems: maxItems}, nil
 }
 
-// Push は 1 件を末尾に追加します。上限超過分は先頭（古い順）から削除します。
-func (b *Buffer) Push(item []byte) error {
+// Push は末尾に追加します。上限超過分は先頭（古い順）から削除します。
+func (b *Buffer) Push(items ...[]byte) error {
 	b.mu.Lock()
 	defer b.mu.Unlock()
-	items, err := b.load()
+	all, err := b.load()
 	if err != nil {
 		return err
 	}
-	items = append(items, item)
-	if len(items) > b.maxItems {
-		items = items[len(items)-b.maxItems:]
+	all = append(all, items...)
+	if len(all) > b.maxItems {
+		all = all[len(all)-b.maxItems:]
 	}
-	return b.save(items)
+	return b.save(all)
 }
 
-// Flush は保存済みのデータを古い順に send へ渡します。
+// Flush は保存済みのデータを古い順に、batch 件ずつまとめて send へ渡します。
 // 送信に失敗した時点で止め、未送信分をファイルに残します。最大 limit 件まで処理します。
-func (b *Buffer) Flush(limit int, send func([]byte) error) (sent int, err error) {
+func (b *Buffer) Flush(limit, batch int, send func([][]byte) error) (sent int, err error) {
 	b.mu.Lock()
 	defer b.mu.Unlock()
 	items, err := b.load()
@@ -48,10 +48,11 @@ func (b *Buffer) Flush(limit int, send func([]byte) error) (sent int, err error)
 		return 0, err
 	}
 	for sent < len(items) && sent < limit {
-		if err = send(items[sent]); err != nil {
+		n := min(batch, len(items)-sent, limit-sent)
+		if err = send(items[sent : sent+n]); err != nil {
 			break
 		}
-		sent++
+		sent += n
 	}
 	if sent > 0 {
 		if saveErr := b.save(items[sent:]); saveErr != nil {

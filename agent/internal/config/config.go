@@ -16,12 +16,23 @@ type Config struct {
 	APIKey string `json:"apiKey"`
 	// ホスト識別子。空ならホスト名を使用
 	HostID string `json:"hostId"`
-	// 収集間隔（秒）
-	IntervalSeconds int `json:"intervalSeconds"`
+	// 測定間隔（秒）。CPU はこの間の平均、メモリとディスクは測定した時点の値
+	SampleSeconds int `json:"sampleSeconds"`
+	// 送信間隔（秒）。その間に測定した分をまとめて送る
+	SendSeconds int `json:"sendSeconds"`
 	// 送信失敗時の一時保存先ディレクトリ。空なら実行ファイルと同じ場所の "buffer"
 	BufferDir string `json:"bufferDir"`
-	// 一時保存する最大件数（超えたら古いものから捨てる）
-	BufferMaxItems int `json:"bufferMaxItems"`
+	// 一時保存する時間（時間）。超えたら古いものから捨てる
+	BufferHours int `json:"bufferHours"`
+
+	// 旧形式の項目（読み込むだけで使わない）。古い config.json でもエラーにしないため
+	IntervalSeconds int `json:"intervalSeconds"`
+	BufferMaxItems  int `json:"bufferMaxItems"`
+}
+
+// BufferItems は一時保存できる測定の件数です。
+func (c *Config) BufferItems() int {
+	return c.BufferHours * 3600 / c.SampleSeconds
 }
 
 // Load は path の設定を読み込み、未指定項目にデフォルト値を入れます。
@@ -44,14 +55,20 @@ func Load(path string) (*Config, error) {
 		h, _ := os.Hostname()
 		c.HostID = h
 	}
-	if c.IntervalSeconds <= 0 {
-		c.IntervalSeconds = 60
+	if c.SampleSeconds <= 0 {
+		c.SampleSeconds = 10
+	}
+	if c.SendSeconds <= 0 {
+		c.SendSeconds = 30
+	}
+	if c.SendSeconds < c.SampleSeconds {
+		c.SendSeconds = c.SampleSeconds
 	}
 	if c.BufferDir == "" {
 		c.BufferDir = filepath.Join(ExeDir(), "buffer")
 	}
-	if c.BufferMaxItems <= 0 {
-		c.BufferMaxItems = 1440 // 60 秒間隔で 24 時間分
+	if c.BufferHours <= 0 {
+		c.BufferHours = 24
 	}
 	return c, nil
 }
